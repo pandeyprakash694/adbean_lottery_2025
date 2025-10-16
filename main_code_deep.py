@@ -34,12 +34,12 @@ PRIZE_MASTER_BULK = {"Wall Clock": {"count": 111, "image": "/static/prizes/wall_
 # NOTE: ranges here are illustrative — they use 5-digit ticket space (10000-20000).
 REGIONS = [
     ("Koshi", ((15001, 16260),), "#00755b"),
-    ("Janakpur", ((18001, 19000),(16501, 16560)), "#a1c181"),
+    ("Janakpur", ((18001, 19000), (16501, 16560)), "#a1c181"),
     ("Birgunj", ((16561, 17000),), "#a1c181"),
     # Mu Ka uses multiple ranges example (you can have many tuples)
     ("Mu Ka", ((10001, 10600), (19001, 19240), (13861, 14000)), "#10ac84"),
-    ("Bagmati", ((11040, 12000),(12001, 12160),(17001, 17140)), "#004d40"),
-    ("Gandaki", ((14001, 15000),(16261, 16500),(17141, 17160)), "#e6091f"),
+    ("Bagmati", ((11040, 12000), (12001, 12160), (17001, 17140)), "#004d40"),
+    ("Gandaki", ((14001, 15000), (16261, 16500), (17141, 17160)), "#e6091f"),
     ("Karnali", ((19241, 20000),), "#00755b"),
     ("Dang", ((13001, 13860),), "#00755b"),
     ("Lumbini - Bhairahawa", ((17161, 18000),), "#4caf50"),
@@ -61,6 +61,7 @@ REGIONS_BULK = [
     ("Birendranagar", 9, "#009688"),
 ]
 
+
 def get_region(ticket_number):
     """Return (region_name, color) for given ticket (handles multiple ranges per region)."""
     for name, ranges, color in REGIONS:
@@ -69,16 +70,18 @@ def get_region(ticket_number):
                 return name, color
     return "Unknown", "#999999"
 
+
 # Global runtime draw state
 current_draw = {
     'initialized': False,
-    'results': [],               # list of dict results loaded from file + drawn during this session
-    'available_tickets': [],     # tickets that remain possible to draw
-    'available_prizes': [],      # list of prize names (one entry per remaining prize unit)
-    'prize_counts_remaining': {},# counts remaining by prize name
+    'results': [],  # list of dict results loaded from file + drawn during this session
+    'available_tickets': [],  # tickets that remain possible to draw
+    'available_prizes': [],  # list of prize names (one entry per remaining prize unit)
+    'prize_counts_remaining': {},  # counts remaining by prize name
     'total_drawn': 0,
     'draw_id': None,
 }
+
 
 def build_prize_list_from_counts(counts):
     """Return a list of prize dicts {'name','image'} repeated by count."""
@@ -88,12 +91,76 @@ def build_prize_list_from_counts(counts):
             prize_list.append({'name': name, 'image': meta.get('image', '/static/prizes/default.jpg')})
     return prize_list
 
+
+def load_results_from_excel():
+    """Load results from Excel file and return them as a list."""
+    results = []
+    if os.path.exists(RESULTS_FILE):
+        try:
+            df = pd.read_excel(RESULTS_FILE)
+            # Expecting columns: Rank, Ticket Number, Ticket ID, Region, Prize Name, Prize Image (optional)
+            for _, row in df.iterrows():
+                try:
+                    # Try different column names for ticket ID
+                    ticket_id = None
+                    for col in ['Ticket ID', 'Ticket Number', 'Ticket']:
+                        if col in row and not pd.isna(row[col]):
+                            try:
+                                ticket_id = int(row[col])
+                                break
+                            except (ValueError, TypeError):
+                                continue
+
+                    if ticket_id is None:
+                        continue
+
+                    prize_name = str(row.get('Prize Name', '')).strip()
+                    region = row.get('Region', None) if 'Region' in row and not pd.isna(row['Region']) else None
+                    prize_image = row.get('Prize Image', None) if 'Prize Image' in row and not pd.isna(
+                        row['Prize Image']) else None
+                    rank = int(row.get('Rank', 0)) if not pd.isna(row.get('Rank', 0)) else 0
+
+                    # Get region info if not available in Excel
+                    region_name, region_color = get_region(ticket_id)
+                    if region:
+                        region_name = region
+
+                    # Use default prize image if not available
+                    if not prize_image:
+                        prize_image = PRIZE_MASTER.get(prize_name, {}).get('image', '/static/prizes/default.jpg')
+
+                    results.append({
+                        'rank': rank,
+                        'ticket_number': ticket_id,
+                        'ticket': f"{ticket_id:05d}",
+                        'region': region_name,
+                        'region_color': region_color,
+                        'prize_name': prize_name,
+                        'prize_image': prize_image
+                    })
+                except Exception as e:
+                    print(f"Warning: Could not process row {_}: {e}")
+                    continue
+
+            print(f"Loaded {len(results)} results from {RESULTS_FILE}")
+        except Exception as e:
+            print(f"Error reading RESULTS_FILE: {e}")
+    else:
+        print(f"Results file {RESULTS_FILE} does not exist yet")
+
+    return results
+
+
 def initialize_draw():
     """(Re)initialize current_draw. Load previously saved winners from RESULTS_FILE if present,
        remove their tickets from available list and decrement prize counts accordingly.
        New session gets new draw_id but retains previous winners in results.
     """
     global current_draw
+
+    # Load results from Excel file first
+    saved_results = load_results_from_excel()
+
     # start with all tickets in range
     all_tickets = list(range(TICKET_START, TICKET_END + 1))
     random.shuffle(all_tickets)
@@ -102,6 +169,7 @@ def initialize_draw():
     prize_counts = {name: {"count": meta["count"], "image": meta.get("image", "/static/prizes/default.jpg")}
                     for name, meta in PRIZE_MASTER.items()}
 
+    # Initialize with empty state
     current_draw.update({
         'initialized': True,
         'results': [],
@@ -112,48 +180,30 @@ def initialize_draw():
         'draw_id': datetime.now().strftime("%Y%m%d_%H%M%S")
     })
 
-    # If results file exists, load previous winners and subtract from available tickets/prize counts
-    if os.path.exists(RESULTS_FILE):
-        try:
-            df = pd.read_excel(RESULTS_FILE)
-            # Expecting columns: Rank, Ticket Number, Ticket ID, Region, Prize Name, Prize Image (optional)
-            for _, row in df.iterrows():
-                try:
-                    ticket_id = int(row.get('Ticket ID') if 'Ticket ID' in row else row.get('Ticket', None))
-                except Exception:
-                    continue
-                prize_name = str(row.get('Prize Name', '')).strip()
-                region = row.get('Region', None) if 'Region' in row else None
-                prize_image = row.get('Prize Image', None) if 'Prize Image' in row else None
-                rank = int(row.get('Rank', 0)) if not pd.isna(row.get('Rank', 0)) else 0
+    # Process saved results to update available tickets and prize counts
+    used_tickets = set()
+    for result in saved_results:
+        ticket_id = result['ticket_number']
+        prize_name = result['prize_name']
 
-                # append to results
-                current_draw['results'].append({
-                    'rank': rank,
-                    'ticket_number': ticket_id,
-                    'ticket': f"{ticket_id:05d}",
-                    'region': region if region else get_region(ticket_id)[0],
-                    'region_color': get_region(ticket_id)[1],
-                    'prize_name': prize_name,
-                    'prize_image': prize_image if prize_image else PRIZE_MASTER.get(prize_name, {}).get('image', '/static/prizes/default.jpg')
-                })
+        # Add to current results
+        current_draw['results'].append(result)
 
-                # remove ticket from available_tickets
-                if ticket_id in current_draw['available_tickets']:
-                    current_draw['available_tickets'].remove(ticket_id)
+        # Remove ticket from available_tickets
+        if ticket_id in current_draw['available_tickets']:
+            current_draw['available_tickets'].remove(ticket_id)
+            used_tickets.add(ticket_id)
 
-                # decrement prize count if present
-                if prize_name in current_draw['prize_counts_remaining']:
-                    # safe decrement (avoid negative)
-                    if current_draw['prize_counts_remaining'][prize_name]['count'] > 0:
-                        current_draw['prize_counts_remaining'][prize_name]['count'] -= 1
+        # Decrement prize count if present
+        if prize_name in current_draw['prize_counts_remaining']:
+            if current_draw['prize_counts_remaining'][prize_name]['count'] > 0:
+                current_draw['prize_counts_remaining'][prize_name]['count'] -= 1
 
-            current_draw['total_drawn'] = len(current_draw['results'])
-        except Exception as e:
-            print("Warning: could not read RESULTS_FILE:", e)
+    current_draw['total_drawn'] = len(current_draw['results'])
 
     # Build available_prizes list (expand counts into list of dicts)
     current_draw['available_prizes'] = build_prize_list_from_counts(current_draw['prize_counts_remaining'])
+
     # Shuffle available tickets and prizes
     random.shuffle(current_draw['available_tickets'])
     random.shuffle(current_draw['available_prizes'])
@@ -163,6 +213,10 @@ def initialize_draw():
         df_empty = pd.DataFrame(columns=['Rank', 'Ticket Number', 'Ticket ID', 'Region', 'Prize Name', 'Prize Image'])
         df_empty.to_excel(RESULTS_FILE, index=False)
 
+    print(
+        f"Draw initialized: {current_draw['total_drawn']} previous winners loaded, {len(current_draw['available_tickets'])} tickets available, {len(current_draw['available_prizes'])} prizes available")
+
+
 def save_results_to_excel():
     """Write entire current_draw['results'] into RESULTS_FILE (overwrites file).
        Ensures previously loaded winners + newly drawn winners are saved together.
@@ -170,16 +224,26 @@ def save_results_to_excel():
     if not current_draw['results']:
         # ensure file exists with headers
         if not os.path.exists(RESULTS_FILE):
-            df_empty = pd.DataFrame(columns=['Rank', 'Ticket Number', 'Ticket ID', 'Region', 'Prize Name', 'Prize Image'])
+            df_empty = pd.DataFrame(
+                columns=['Rank', 'Ticket Number', 'Ticket ID', 'Region', 'Prize Name', 'Prize Image'])
             df_empty.to_excel(RESULTS_FILE, index=False)
         return
 
-    df = pd.DataFrame(current_draw['results'])
+    # Sort results by rank before saving
+    sorted_results = sorted(current_draw['results'], key=lambda x: x['rank'])
+
+    df = pd.DataFrame(sorted_results)
     # Ensure columns exist and are ordered
     df = df[['rank', 'ticket', 'ticket_number', 'region', 'prize_name', 'prize_image']].copy()
     df.columns = ['Rank', 'Ticket Number', 'Ticket ID', 'Region', 'Prize Name', 'Prize Image']
-    with pd.ExcelWriter(RESULTS_FILE, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='Lottery Results')
+
+    try:
+        with pd.ExcelWriter(RESULTS_FILE, engine='openpyxl') as writer:
+            df.to_excel(writer, index=False, sheet_name='Lottery Results')
+        print(f"Saved {len(df)} results to {RESULTS_FILE}")
+    except Exception as e:
+        print(f"Error saving to Excel: {e}")
+
 
 def select_prize_for_draw():
     """Select a prize from available_prizes following the rule:
@@ -212,6 +276,7 @@ def select_prize_for_draw():
             current_draw['prize_counts_remaining'][chosen['name']]['count'] -= 1
     return chosen
 
+
 def draw_single_winner():
     """Perform a single draw. Returns result dict or None if no winners left."""
     if not current_draw['initialized']:
@@ -243,6 +308,7 @@ def draw_single_winner():
     current_draw['results'].append(result)
     save_results_to_excel()
     return result
+
 
 def draw_bulk_wall_clocks():
     """
@@ -341,7 +407,7 @@ button { width:100%; padding:12px 14px; border-radius:20px; border:none; font-we
 #drawBtn { background:#00755b; color:#a3edd9;}
 #bulkBtn { background:#00755b; color:#a3edd9;}
 #uploadBtn { background:#004c40; color:#a3edd9;}
-.prize-card { text-align:center; max-width:360px; padding:18px; }
+.prize-card { text-align:center; max-width:460px; padding:18px; }
 #prizeImage { width:260px; height:260px; object-fit:cover; border-radius:16px; box-shadow:0 10px 30px rgba(72,184,163,0.12); }
 #statusText { margin-top:12px; font-weight:700; color:#23735f; font-size:1.05rem; }
 
@@ -361,6 +427,9 @@ tr:nth-child(even) { background:#eaf6f1; }
 <body>
 <div class="container">
   <header class="header">
+  <div class="logo-container">
+                <img class="header-image" src="/static/logo/logo_union.png" alt="Header Image" />
+            </div>
     <h1>दशैं-तिहार उपहार कार्यक्रम २०८२ — Lucky Draw</h1>
     <div id="statsBar">🎟️ Total Prizes: <span id="totalPrizes">{{total_winners}}</span> | 🏆 Drawn: <span id="drawnCount">0</span> | 🎁 Remaining: <span id="remainingCount">{{total_winners}}</span></div>
   </header>
@@ -378,17 +447,17 @@ tr:nth-child(even) { background:#eaf6f1; }
       <hr width="100%" size="2">
       <div id="regionBadge">Region</div>
       <hr width="100%" size="2">
-      <button id="drawBtn">🎊 DRAW NOW 🎉</button>
-      <hr width="100%" size="2">
-      <button id="bulkBtn">🎯 DRAW BULK WALL CLOCKS</button>
+      <button id="drawBtn">🎊 DRAW SINGLE PRIZE 🎉</button>
+      <button id="uploadBtn">------------------</button>
+      <button id="bulkBtn">🎯 DRAW BULK PRIZES 🎉</button>
       <input type="file" id="uploadInput" style="display:none;">
       <hr width="100%" size="2">
       <div id="statusText">Ready to draw</div>
     </div>
 
     <div class="prize-card">
-      <img id="prizeImage" src="/static/prizes/wall_clock.jpg" alt="Prize Image">
-      <div id="prizeBadge" style="font-weight:800; margin-top:12px;">Wall Clock</div>
+      <img id="prizeImage" src="/static/prizes/win.jpg" alt="Prize Image">
+      <div id="prizeBadge" style="font-weight:800; margin-top:12px;">कृषि विकास बैंक कर्मचारी संघ, नेपाल</div>
     </div>
   </div>
 
@@ -463,24 +532,39 @@ async function rollDigitsSequentially(luckyNumber, callback) {
 }
 
 function updateStatsUI(total, drawn, remaining) {
+  console.log(`Updating stats: total=${total}, drawn=${drawn}, remaining=${remaining}`);
   document.getElementById('totalPrizes').textContent = total;
   document.getElementById('drawnCount').textContent = drawn;
   document.getElementById('remainingCount').textContent = remaining;
 }
 
 function renderResultsTable() {
+  console.log(`Rendering ${allResults.length} results in table`);
   resultsBody.innerHTML = '';
-  allResults.slice().reverse().forEach(r => {
+  
+  // Sort results by rank in descending order for display (newest first)
+  const sortedResults = [...allResults].sort((a, b) => b.rank - a.rank);
+  
+  sortedResults.forEach(r => {
     const tr = document.createElement('tr');
     tr.dataset.rank = r.rank;
 
-    const tdRank = document.createElement('td'); tdRank.textContent = r.rank;
-    const tdTicket = document.createElement('td'); tdTicket.textContent = r.ticket;
+    const tdRank = document.createElement('td'); 
+    tdRank.textContent = r.rank;
+    
+    const tdTicket = document.createElement('td'); 
+    tdTicket.textContent = r.ticket;
+    
     const tdRegion = document.createElement('td'); 
     tdRegion.innerHTML = `<span class="region-tag" style="background:${r.region_color}">${r.region}</span>`;
-    const tdPrize = document.createElement('td'); tdPrize.textContent = r.prize_name;
+    
+    const tdPrize = document.createElement('td'); 
+    tdPrize.textContent = r.prize_name;
 
-    tr.appendChild(tdRank); tr.appendChild(tdTicket); tr.appendChild(tdRegion); tr.appendChild(tdPrize);
+    tr.appendChild(tdRank); 
+    tr.appendChild(tdTicket); 
+    tr.appendChild(tdRegion); 
+    tr.appendChild(tdPrize);
     resultsBody.appendChild(tr);
   });
   paginateTable();
@@ -503,7 +587,10 @@ function paginateTable() {
   shownCount.textContent = rows.length;
 }
 
-function gotoPage(p) { currentPage = p; paginateTable(); }
+function gotoPage(p) { 
+  currentPage = p; 
+  paginateTable(); 
+}
 
 // ---------------------- DRAW PROCESS ----------------------
 
@@ -517,7 +604,7 @@ drawBtn.onclick = async function() {
   regionBadge.textContent = "Region";
   regionBadge.style.backgroundColor = "";
   prizeBadge.textContent = "Shuffling...";
-  prizeImage.src = "/static/prizes/wall_clock.jpg";
+  prizeImage.src = "/static/prizes/win.jpg";
 
   drumroll.currentTime = 0;
   drumroll.loop = true;
@@ -589,10 +676,11 @@ drawBtn.onclick = async function() {
     prizeBadge.textContent = w.prize_name;
     prizeImage.src = w.prize_image;
 
-
-    updateStatsUI(stats.total_prizes || {{total_winners}}, stats.drawn_count, stats.remaining_count);
-    allResults.push(w);
-    renderResultsTable();
+    // Reload all results from server to get updated list including previous draws
+    await loadResultsFromServer();
+    
+    // Update stats with values from server
+    updateStatsUI(stats.total_prizes, stats.drawn_count, stats.remaining_count);
 
     drumroll.pause(); drumroll.currentTime = 0; drumroll.loop = false;
     cheer.currentTime = 0; cheer.play();
@@ -639,12 +727,8 @@ bulkBtn.onclick = async function() {
     const winners = data.results || [];
     statusText.innerHTML = `<b>${winners.length} Wall Clock winners drawn successfully!</b>`;
 
-    // Update stats UI
-    updateStatsUI({{total_winners}}, current_drawn_count = 26 + winners.length, remaining = 0);
-
-    // Merge with allResults so they show in table
-    allResults = allResults.concat(winners);
-    renderResultsTable();
+    // Reload all results from server to get updated list
+    await loadResultsFromServer();
 
     // Highlight prize
     prizeBadge.textContent = "Wall Clock (Bulk Winners)";
@@ -668,7 +752,6 @@ uploadInput.onchange = async (e) => {
   formData.append("file", file);
   const resp = await fetch('/api/upload', { method:'POST', body: formData });
   const stats = await resp.json();
-  updateStatsUI(stats.total_prizes || {{total_winners}}, stats.drawn_count, stats.remaining_count);
   await loadResultsFromServer();
   for (let d = 0; d < 5; d++) document.getElementById('d'+d).textContent = '0';
   regionBadge.textContent = 'Region'; regionBadge.style.backgroundColor = '';
@@ -678,28 +761,46 @@ uploadInput.onchange = async (e) => {
 
 async function loadResultsFromServer() {
   try {
+    console.log('Loading results from server...');
     const r = await fetch('/api/results');
     const data = await r.json();
-    allResults = data.results || [];
-    renderResultsTable();
-    updateStatsUI(data.total_prizes || {{total_winners}}, data.drawn_count || 0, data.remaining_count || {{total_winners}});
+    
+    console.log('Server response:', data);
+    
+    if (data.results && Array.isArray(data.results)) {
+      allResults = data.results;
+      renderResultsTable();
+      updateStatsUI(data.total_prizes, data.drawn_count, data.remaining_count);
+      console.log(`Loaded ${allResults.length} results from server`);
+    } else {
+      console.error('Invalid response format from server:', data);
+    }
   } catch (e) {
-    console.warn("Could not load results:", e);
+    console.error("Could not load results:", e);
   }
 }
 
-loadResultsFromServer();
+// Load results immediately when page loads
+document.addEventListener('DOMContentLoaded', function() {
+  console.log('Page loaded, fetching results from server...');
+  loadResultsFromServer();
+});
+
+// Also try loading after a short delay in case DOM isn't fully ready
+setTimeout(loadResultsFromServer, 1000);
 </script>
 </body>
 </html>
 """
 
-#calling API
+
+# calling API
 @app.route("/")
 def index():
     if not current_draw['initialized']:
         initialize_draw()
     return render_template_string(HTML_TEMPLATE, total_winners=TOTAL_WINNERS)
+
 
 @app.route("/api/draw", methods=["POST"])
 def api_draw():
@@ -729,10 +830,13 @@ def api_draw():
 def api_results():
     """Return full results list and counts for UI to render (persistent after restart)."""
     # Ensure draw is initialized from Excel if Flask restarted
-    if not current_draw['initialized'] or not current_draw['results']:
+    if not current_draw['initialized']:
         initialize_draw()
 
     remaining_count = sum(meta['count'] for meta in current_draw['prize_counts_remaining'].values())
+
+    print(
+        f"API Results: returning {len(current_draw['results'])} results, drawn_count: {current_draw['total_drawn']}, remaining: {max(0, TOTAL_WINNERS - current_draw['total_drawn'])}")
 
     return jsonify({
         "total_prizes": TOTAL_WINNERS,
@@ -740,7 +844,6 @@ def api_results():
         "remaining_count": max(0, TOTAL_WINNERS - current_draw['total_drawn']),
         "results": current_draw['results']
     })
-
 
 @app.route("/api/upload", methods=["POST"])
 def api_upload():
@@ -758,7 +861,8 @@ def api_upload():
 
     # Validate and convert rows
     rows = []
-    prize_counts = {name: {"count": meta["count"], "image": meta.get("image", "/static/prizes/default.jpg")} for name, meta in PRIZE_MASTER.items()}
+    prize_counts = {name: {"count": meta["count"], "image": meta.get("image", "/static/prizes/default.jpg")} for
+                    name, meta in PRIZE_MASTER.items()}
     tickets_taken = set()
     for _, row in df.iterrows():
         ticket_id = None
@@ -773,7 +877,8 @@ def api_upload():
             continue
         prize_name = str(row.get('Prize Name', '')).strip()
         rank = int(row.get('Rank', 0)) if not pd.isna(row.get('Rank', 0)) else 0
-        prize_image = row.get('Prize Image', PRIZE_MASTER.get(prize_name, {}).get('image', '/static/prizes/default.jpg'))
+        prize_image = row.get('Prize Image',
+                              PRIZE_MASTER.get(prize_name, {}).get('image', '/static/prizes/default.jpg'))
 
         if ticket_id is None:
             continue
@@ -796,7 +901,8 @@ def api_upload():
     current_draw['available_tickets'] = [t for t in all_tickets if t not in tickets_taken]
     # rebuild remaining prizes list and counts
     current_draw['prize_counts_remaining'] = prize_counts
-    current_draw['available_prizes'] = build_prize_list_from_counts({k: {'count': v['count'], 'image': v['image']} for k, v in prize_counts.items()})
+    current_draw['available_prizes'] = build_prize_list_from_counts(
+        {k: {'count': v['count'], 'image': v['image']} for k, v in prize_counts.items()})
     random.shuffle(current_draw['available_tickets'])
     random.shuffle(current_draw['available_prizes'])
     # Save uploaded data to RESULTS_FILE so it's persisted as base for the next session
@@ -808,6 +914,7 @@ def api_upload():
         "remaining_count": max(0, TOTAL_WINNERS - current_draw['total_drawn']),
         "message": "Uploaded and loaded results."
     })
+
 
 @app.route("/api/draw_bulk", methods=["POST"])
 def api_draw_bulk():
