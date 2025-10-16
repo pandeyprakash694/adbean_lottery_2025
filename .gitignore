@@ -1,0 +1,94 @@
+# Python
+*.py[cod]
+__pycache__/
+*.sw[op]
+.Python
+.pyc
+
+# Django
+*.log
+*.pot
+*.sqlite3
+db.sqlite3
+staticfiles/
+.coverage
+.coverage.*
+.cache
+coverage.xml
+nosetests.xml
+*.cover
+.hypothesis/
+.idea/
+.tox/
+.pytest_cache/
+celerybeat-schedule
+*.env
+
+# Environment
+.env
+.env.*
+venv/
+.venv/
+.venv/*
+.venv/bin/
+.venv/lib/
+.venv/lib/python*/
+
+# macOS
+.DS_Store
+
+# Windows
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+
+# JetBrains IDEs
+.idea/
+*.iml
+*.iws
+*.ipr
+
+# Visual Studio Code
+.vscode/
+.history/
+*.code-workspace
+
+# Temporary files
+*.tmp
+*.bak
+*.orig
+*.patch
+
+# Distribution / packaging
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyInstaller
+*.manifest
+*.spec
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+media
+
+# Custom addition for your media/ticket attachment
+media/ticket_attachments/
