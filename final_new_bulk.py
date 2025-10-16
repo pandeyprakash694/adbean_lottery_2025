@@ -39,7 +39,7 @@ REGIONS = [
     # Mu Ka uses multiple ranges example (you can have many tuples)
     ("Mu Ka", ((10001, 10600), (19001, 19240), (13861, 14000)), "#10ac84"),
     ("Bagmati", ((11040, 12000),(12001, 12160),(17001, 17140)), "#004d40"),
-    ("Gandaki", ((14001, 15000),(16261, 16500),(17141, 17160)), "#004d40"),
+    ("Gandaki", ((14001, 15000),(16261, 16500),(17141, 17160)), "#e6091f"),
     ("Karnali", ((19241, 20000),), "#00755b"),
     ("Dang", ((13001, 13860),), "#00755b"),
     ("Lumbini - Bhairahawa", ((17161, 18000),), "#4caf50"),
@@ -336,7 +336,7 @@ body { font-family: 'Noto Sans', Arial, sans-serif; background:#f0f5f4; color:#0
 .ticket-box { background:#e6f2ef; padding:22px; border-radius:12px; width:380px; text-align:center; box-shadow:0 6px 18px rgba(0,115,78,0.08); }
 .digits { display:flex; justify-content:center; gap:10px; margin:18px 0 8px 0; }
 .digit { width:62px; height:86px; border-radius:10px; background:#00755b; color:#a3edd9; display:flex; align-items:center; justify-content:center; font-weight:800; font-size:40px; font-family:monospace; }
-#regionBadge { padding:10px 18px; border-radius:22px; background:#004c40; color:#a3edd9; font-weight:700; display:inline-block; margin-top:8px;}
+#regionBadge { padding:10px 18px; border-radius:22px; background:#e6091f; color:#a3edd9; font-weight:700; display:inline-block; margin-top:8px;}
 button { width:100%; padding:12px 14px; border-radius:20px; border:none; font-weight:800; cursor:pointer; margin-top:10px; }
 #drawBtn { background:#00755b; color:#a3edd9;}
 #bulkBtn { background:#00755b; color:#a3edd9;}
@@ -375,11 +375,14 @@ tr:nth-child(even) { background:#eaf6f1; }
         <div class="digit" id="d3">0</div>
         <div class="digit" id="d4">0</div>
       </div>
+      <hr width="100%" size="2">
       <div id="regionBadge">Region</div>
+      <hr width="100%" size="2">
       <button id="drawBtn">🎊 DRAW NOW 🎉</button>
-      <button id="">------------------------------------</button>
+      <hr width="100%" size="2">
       <button id="bulkBtn">🎯 DRAW BULK WALL CLOCKS</button>
       <input type="file" id="uploadInput" style="display:none;">
+      <hr width="100%" size="2">
       <div id="statusText">Ready to draw</div>
     </div>
 
@@ -800,20 +803,30 @@ def api_upload():
         "message": "Uploaded and loaded results."
     })
 
-#bulk API
 @app.route("/api/draw_bulk", methods=["POST"])
 def api_draw_bulk():
     """
     API endpoint to trigger the bulk Wall Clock draw.
     Returns JSON with summary and winners list.
     """
-    # Ensure at least 26 draws have been completed before allowing bulk draw
+    # Ensure main draw has reached at least 26
     if current_draw['total_drawn'] < 26:
         return jsonify({
             "error": "Bulk draw allowed only after 26 draws."
         }), 400
 
-    # Perform bulk draw (must return a list of winners)
+    # Prevent multiple bulk draws (if already performed)
+    if os.path.exists(RESULTS_FILE_BULK):
+        try:
+            df_bulk_existing = pd.read_excel(RESULTS_FILE_BULK)
+            if not df_bulk_existing.empty and len(df_bulk_existing) >= PRIZE_MASTER_BULK["Wall Clock"]["count"]:
+                return jsonify({
+                    "error": "Bulk draw already completed. 111 Wall Clock winners have been selected."
+                }), 400
+        except Exception as e:
+            print("⚠️ Warning: Could not read existing bulk file:", e)
+
+    # Perform the bulk wall clock draw
     try:
         results_bulk = draw_bulk_wall_clocks()
     except Exception as e:
@@ -828,6 +841,7 @@ def api_draw_bulk():
         "drawn_count": current_draw['total_drawn'],
         "remaining_count": max(0, TOTAL_WINNERS - current_draw['total_drawn'])
     })
+
 
 if __name__ == "__main__":
     initialize_draw()
