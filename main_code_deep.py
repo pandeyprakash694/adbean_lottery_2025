@@ -11,7 +11,7 @@ app = Flask(__name__)
 # Config
 RESULTS_FILE = 'lottery_results.xlsx'
 RESULTS_FILE_BULK = 'lottery_results_bulk.xlsx'
-TICKET_START = 10000
+TICKET_START = 10001
 TICKET_END = 20000  # inclusive
 TOTAL_WINNERS = 137  # total number of winning tickets to be selected
 
